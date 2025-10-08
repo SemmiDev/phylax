@@ -1,0 +1,32 @@
+[Unit]
+Description=Multi-Database Backup Service
+Documentation=https://github.com/yourusername/phylax
+After=network-online.target mysql.service postgresql.service mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/phylax -config /etc/phylax/config.yaml
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups /var/log/phylax /tmp
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=2G
+
+[Install]
+WantedBy=multi-user.target

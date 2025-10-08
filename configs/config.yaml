@@ -1,0 +1,75 @@
+app:
+  name: "phylax"
+  log_level: "info"
+  log_file: "log/phylax/backup.log"
+
+databases:
+  - name: "production-mysql"
+    type: "mysql"
+    host: "localhost"
+    port: 3306
+    username: "root"
+    password: ""
+    database: "sapabipa"
+    enabled: true
+    schedule: "* * * * * *"  # Every minute
+
+  - name: "production-postgres"
+    type: "postgresql"
+    host: "localhost"
+    port: 5432
+    username: "postgres"
+    password: "password"
+    database: "app_production"
+    enabled: false
+    schedule: "0 0 3 * * *"  # 3 AM daily
+
+  - name: "analytics-mysql"
+    type: "mysql"
+    host: "analytics.example.com"
+    port: 3306
+    username: "backup_user"
+    password: "password"
+    database: "analytics"
+    enabled: false
+    schedule: "0 0 4 * * *"  # 4 AM daily
+
+  - name: "logs-mongodb"
+    type: "mongodb"
+    host: "localhost"
+    port: 27017
+    username: "admin"
+    password: "password"
+    database: "logs"
+    enabled: false
+    schedule: "0 0 1 * * *"  # 1 AM daily
+
+backup:
+  local_path: "backups/databases"
+  retention_days: 7
+  compress: true
+
+  upload_targets:
+    - type: "local"
+      enabled: true
+
+    - type: "gdrive"
+      enabled: false
+      credentials_file: "/etc/phylax/gdrive-credentials.json"
+      folder_id: "your_folder_id"
+
+    - type: "s3"
+      enabled: false
+      region: "us-east-1"
+      bucket: "my-backups"
+      access_key: "YOUR_ACCESS_KEY"
+      secret_key: "YOUR_SECRET_KEY"
+      prefix: "database-backups/"
+
+    - type: "telegram"
+      enabled: false
+      bot_token: "YOUR_BOT_TOKEN"
+      chat_id: "-1001234567890"
+      # Only send notification, not file (for large files)
+      send_file: false
+      notify_only: true
