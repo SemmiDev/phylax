@@ -1,4 +1,4 @@
-package compressor_test
+package compressor
 
 import (
 	"bytes"
@@ -7,13 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/semmidev/phylax/internal/adapter/compressor"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestGzipCompressor(t *testing.T) {
 	Convey("Given a GzipCompressor", t, func() {
-		compressor := compressor.NewGzip()
+		compressor := NewGzip()
 
 		Convey("Compress method", func() {
 			Convey("When compressing a valid file", func() {
