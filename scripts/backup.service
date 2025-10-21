@@ -1,13 +1,13 @@
 [Unit]
-Description=Multi-Database Backup Service
-Documentation=https://github.com/yourusername/phylax
-After=network-online.target mysql.service postgresql.service mongod.service
+Description="Multi Database Backup Service"
+Documentation=https://github.com/semmidev/phylax
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=garuda
+Group=garuda
 ExecStart=/usr/local/bin/phylax -config /etc/phylax/config.yaml
 Restart=on-failure
 RestartSec=10
