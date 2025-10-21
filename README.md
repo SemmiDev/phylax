@@ -6,8 +6,6 @@ Production-ready automated backup solution with support for multiple databases a
 
 ### Database Support
 - ✅ **MySQL** - Full mysqldump integration
-- ✅ **PostgreSQL** - pg_dump with custom format
-- ✅ **MongoDB** - mongodump with gzip
 - ✅ **Multiple Connections** - Backup multiple databases with different schedules
 - ✅ **Flexible Scheduling** - Individual cron schedule per database
 
