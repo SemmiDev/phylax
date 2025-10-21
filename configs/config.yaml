@@ -1,5 +1,6 @@
 app:
   name: 'phylax'
+  port: 8089
   log_level: 'info'
   log_file: 'log/phylax/backup.log'
 

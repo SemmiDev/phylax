@@ -14,6 +14,7 @@ type Config struct {
 
 type AppConfig struct {
 	Name     string `mapstructure:"name"`
+	Port     int    `mapstructure:"port"`
 	LogLevel string `mapstructure:"log_level"`
 	LogFile  string `mapstructure:"log_file"`
 }
