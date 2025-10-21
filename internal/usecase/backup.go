@@ -13,7 +13,7 @@ import (
 
 type BackupUseCase struct {
 	db            domain.Database
-	localStorage  localStorage
+	localStorage  LocalStorage
 	uploadTargets []UploadTarget
 	compressor    domain.Compressor
 	logger        Logger
@@ -25,7 +25,7 @@ type UploadTarget struct {
 	Storage domain.Storage
 }
 
-type localStorage interface {
+type LocalStorage interface {
 	domain.Storage
 	GetPath(filename string) string
 }
@@ -38,7 +38,7 @@ type Logger interface {
 
 func NewBackup(
 	db domain.Database,
-	localStorage localStorage,
+	localStorage LocalStorage,
 	uploadTargets []UploadTarget,
 	compressor domain.Compressor,
 	logger Logger,

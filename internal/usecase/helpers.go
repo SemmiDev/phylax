@@ -2,26 +2,21 @@ package usecase
 
 import (
 	"fmt"
-	"strings"
+	"regexp"
 	"time"
 )
 
+// extractTimestamp extracts timestamp from backup filename
+// Format: {dbname}_{type}_{YYYYMMDD}_{HHMMSS}.{ext}
 func extractTimestamp(filename string) (time.Time, error) {
-	// Remove extensions
-	name := strings.TrimSuffix(filename, ".gz")
-	name = strings.TrimSuffix(name, ".sql")
-	name = strings.TrimSuffix(name, ".dump")
-	name = strings.TrimSuffix(name, ".archive")
+	// Pattern: name_type_20060102_150405.ext or name_type_20060102_150405.sql.gz
+	pattern := regexp.MustCompile(`(\d{8})_(\d{6})`)
+	matches := pattern.FindStringSubmatch(filename)
 
-	// Split by underscore and get last two parts (date_time)
-	parts := strings.Split(name, "_")
-	if len(parts) < 2 {
-		return time.Time{}, fmt.Errorf("invalid filename format")
+	if len(matches) < 3 {
+		return time.Time{}, fmt.Errorf("invalid filename format: no timestamp found")
 	}
 
-	dateStr := parts[len(parts)-2]
-	timeStr := parts[len(parts)-1]
-	timestampStr := dateStr + "_" + timeStr
-
+	timestampStr := matches[1] + "_" + matches[2]
 	return time.Parse("20060102_150405", timestampStr)
 }

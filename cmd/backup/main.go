@@ -12,20 +12,9 @@ import (
 	"github.com/semmidev/phylax/internal/config"
 )
 
-var (
-	version   = "2.0.0"
-	buildTime = "unknown"
-)
-
 func main() {
 	configPath := flag.String("config", "configs/config.yaml", "path to config file")
-	showVersion := flag.Bool("version", false, "show version")
 	flag.Parse()
-
-	if *showVersion {
-		fmt.Printf("phylax version %s (built: %s)\n", version, buildTime)
-		os.Exit(0)
-	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {

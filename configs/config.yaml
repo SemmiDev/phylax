@@ -12,7 +12,7 @@ databases:
     password: ''
     database: 'sapabipa'
     enabled: true
-    schedule: '* * * * * *' # Every minute
+    schedule: '0 */3 * * * *' # Every minute
 
 backup:
   local_path: 'backups/databases'

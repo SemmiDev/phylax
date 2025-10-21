@@ -13,6 +13,9 @@ type LocalStorage struct {
 }
 
 func NewLocal(basePath string) (*LocalStorage, error) {
+	// 7 (owner) → rwx → read, write, execute
+	// 5 (group) → r-x → read, execute
+	// 5 (others) → r-x → read, execute
 	if err := os.MkdirAll(basePath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create backup directory: %w", err)
 	}

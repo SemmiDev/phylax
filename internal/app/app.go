@@ -20,6 +20,7 @@ type App struct {
 	scheduler     *scheduler.Scheduler
 	localStorage  *storage.LocalStorage
 	uploadTargets []usecase.UploadTarget
+	databases     []domain.Database
 	backupJobs    []domain.BackupJob
 	cleanupUC     *usecase.CleanupUseCase
 }
@@ -64,10 +65,13 @@ func New(cfg *config.Config) (*App, error) {
 	// Initialize scheduler
 	sched := scheduler.New()
 
+	databases := Databases(cfg, log)
+
 	return &App{
 		config:        cfg,
 		logger:        log,
 		scheduler:     sched,
+		databases:     databases,
 		localStorage:  localStorage,
 		uploadTargets: uploadTargets,
 		backupJobs:    backupJobs,
@@ -178,6 +182,37 @@ func initializeBackupJobs(
 	}
 
 	return jobs
+}
+
+func Databases(cfg *config.Config, log *logger.Logger) []domain.Database {
+	dbs := make([]domain.Database, 0)
+
+	for _, dbCfg := range cfg.GetEnabledDatabases() {
+		var db domain.Database
+
+		switch dbCfg.Type {
+		case "mysql":
+			db = database.NewMySQL(&dbCfg)
+		case "postgresql":
+			db = database.NewPostgreSQL(&dbCfg)
+		case "mongodb":
+			db = database.NewMongoDB(&dbCfg)
+		default:
+			log.Warnf("Unsupported database type: %s for %s", dbCfg.Type, dbCfg.Name)
+			continue
+		}
+
+		// Test connection
+		ctx := context.Background()
+		if err := db.Ping(ctx); err != nil {
+			log.Errorf("Failed to connect to %s: %v", dbCfg.Name, err)
+			continue
+		}
+
+		dbs = append(dbs, db)
+	}
+
+	return dbs
 }
 
 func (a *App) Run(ctx context.Context) error {

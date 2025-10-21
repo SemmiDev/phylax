@@ -9,14 +9,14 @@ import (
 )
 
 type CleanupUseCase struct {
-	localStorage  localStorage
+	localStorage  LocalStorage
 	uploadTargets []UploadTarget
 	logger        Logger
 	retentionDays int
 }
 
 func NewCleanup(
-	localStorage localStorage,
+	localStorage LocalStorage,
 	uploadTargets []UploadTarget,
 	logger Logger,
 	retentionDays int,

@@ -72,7 +72,7 @@ func Load(path string) (*Config, error) {
 
 	v.SetDefault("app.name", "phylax")
 	v.SetDefault("app.log_level", "info")
-	v.SetDefault("backup.retention_days", 7)
+	v.SetDefault("backup.retention_days", 14)
 	v.SetDefault("backup.compress", true)
 
 	if err := v.ReadInConfig(); err != nil {
