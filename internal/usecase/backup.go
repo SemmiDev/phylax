@@ -13,7 +13,6 @@ import (
 
 type Backup struct {
 	db            domain.Database
-	localStorage  LocalStorage
 	uploadTargets []UploadTarget
 	compressor    domain.Compressor
 	logger        Logger
@@ -25,11 +24,6 @@ type UploadTarget struct {
 	Storage domain.Storage
 }
 
-type LocalStorage interface {
-	domain.Storage
-	GetPath(filename string) string
-}
-
 type Logger interface {
 	Infof(template string, args ...interface{})
 	Errorf(template string, args ...interface{})
@@ -38,7 +32,6 @@ type Logger interface {
 
 func NewBackup(
 	db domain.Database,
-	localStorage LocalStorage,
 	uploadTargets []UploadTarget,
 	compressor domain.Compressor,
 	logger Logger,
@@ -46,7 +39,6 @@ func NewBackup(
 ) *Backup {
 	return &Backup{
 		db:            db,
-		localStorage:  localStorage,
 		uploadTargets: uploadTargets,
 		compressor:    compressor,
 		logger:        logger,
@@ -56,7 +48,7 @@ func NewBackup(
 
 func (uc *Backup) Execute(ctx context.Context) error {
 	start := time.Now()
-	dbName := uc.db.GetName()
+	dbName := uc.db.Name()
 	uc.logger.Infof("[%s] Starting backup...", dbName)
 
 	if err := uc.db.Ping(ctx); err != nil {
@@ -102,13 +94,13 @@ func (uc *Backup) Execute(ctx context.Context) error {
 
 func (uc *Backup) generateFilename() string {
 	timestamp := time.Now().Format("20060102_150405")
-	baseFilename := fmt.Sprintf("%s_%s_%s", uc.db.GetName(), uc.db.GetType(), timestamp)
+	baseFilename := fmt.Sprintf("%s_%s_%s", uc.db.Name(), uc.db.Type(), timestamp)
 
 	ext := map[string]string{
 		"mysql":      ".sql",
 		"postgresql": ".dump",
 		"mongodb":    ".archive",
-	}[uc.db.GetType()]
+	}[uc.db.Type()]
 
 	if ext == "" {
 		ext = ".backup"
@@ -118,7 +110,7 @@ func (uc *Backup) generateFilename() string {
 }
 
 func (uc *Backup) compressBackup(tempPath, filename string, originalSize int64) (string, string, error) {
-	dbName := uc.db.GetName()
+	dbName := uc.db.Name()
 	compressedFilename := filename + ".gz"
 	compressedPath := filepath.Join(os.TempDir(), compressedFilename)
 
@@ -137,24 +129,15 @@ func (uc *Backup) compressBackup(tempPath, filename string, originalSize int64) 
 }
 
 func (uc *Backup) uploadBackup(ctx context.Context, filePath, filename string) error {
-	dbName := uc.db.GetName()
-
-	uc.logger.Infof("[%s] Uploading to local storage...", dbName)
-	if err := uc.localStorage.Upload(ctx, filePath, filename); err != nil {
-		return fmt.Errorf("local upload: %w", err)
-	}
-	uc.logger.Infof("[%s] Successfully uploaded to local storage", dbName)
-
 	if len(uc.uploadTargets) > 0 {
 		uc.uploadToTargets(ctx, filePath, filename)
 	}
-
 	return nil
 }
 
 func (uc *Backup) uploadToTargets(ctx context.Context, filePath, filename string) {
 	var wg sync.WaitGroup
-	dbName := uc.db.GetName()
+	dbName := uc.db.Name()
 
 	for _, target := range uc.uploadTargets {
 		wg.Add(1)

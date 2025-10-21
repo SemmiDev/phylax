@@ -33,7 +33,6 @@ type DatabaseConfig struct {
 }
 
 type BackupConfig struct {
-	LocalPath     string         `mapstructure:"local_path"`
 	RetentionDays int            `mapstructure:"retention_days"`
 	Compress      bool           `mapstructure:"compress"`
 	UploadTargets []UploadTarget `mapstructure:"upload_targets"`
@@ -41,6 +40,7 @@ type BackupConfig struct {
 
 type UploadTarget struct {
 	Type            string `mapstructure:"type"`
+	Path            string `mapstructure:"path"`
 	Enabled         bool   `mapstructure:"enabled"`
 	CredentialsFile string `mapstructure:"credentials_file"`
 	FolderID        string `mapstructure:"folder_id"`
@@ -99,10 +99,6 @@ func (c *Config) validate() error {
 		if db.Enabled && db.Schedule == "" {
 			return fmt.Errorf("database[%d]: schedule required when enabled", i)
 		}
-	}
-
-	if c.Backup.LocalPath == "" {
-		return fmt.Errorf("backup.local_path required")
 	}
 
 	return nil

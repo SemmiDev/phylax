@@ -20,7 +20,6 @@ type App struct {
 	scheduler     *scheduler.Scheduler
 	localStorage  *storage.LocalStorage
 	uploadTargets []usecase.UploadTarget
-	databases     []domain.Database
 	backupJobs    []domain.BackupJob
 	cleanupUC     *usecase.Cleanup
 }
@@ -35,12 +34,6 @@ func New(cfg *config.Config) (*App, error) {
 	log.Infof("Starting %s", cfg.App.Name)
 	log.Infof("Found %d database(s) configured", len(cfg.EnabledDatabases()))
 
-	// Initialize local storage
-	localStorage, err := storage.NewLocal(cfg.Backup.LocalPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize local storage: %w", err)
-	}
-
 	// Initialize compressor
 	comp := compressor.NewGzip()
 
@@ -48,7 +41,7 @@ func New(cfg *config.Config) (*App, error) {
 	uploadTargets := initializeUploadTargets(cfg, log)
 
 	// Initialize databases and backup jobs
-	backupJobs := initializeBackupJobs(cfg, localStorage, uploadTargets, comp, log)
+	backupJobs := initializeBackupJobs(cfg, uploadTargets, comp, log)
 
 	if len(backupJobs) == 0 {
 		return nil, fmt.Errorf("no enabled databases found")
@@ -56,7 +49,6 @@ func New(cfg *config.Config) (*App, error) {
 
 	// Initialize cleanup use case
 	cleanupUC := usecase.NewCleanup(
-		localStorage,
 		uploadTargets,
 		log,
 		cfg.Backup.RetentionDays,
@@ -65,14 +57,10 @@ func New(cfg *config.Config) (*App, error) {
 	// Initialize scheduler
 	sched := scheduler.New()
 
-	databases := Databases(cfg, log)
-
 	return &App{
 		config:        cfg,
 		logger:        log,
 		scheduler:     sched,
-		databases:     databases,
-		localStorage:  localStorage,
 		uploadTargets: uploadTargets,
 		backupJobs:    backupJobs,
 		cleanupUC:     cleanupUC,
@@ -112,8 +100,11 @@ func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.U
 			log.Infof("✓ Telegram upload enabled")
 
 		case "local":
-			// Local storage is always enabled
-			continue
+			stor, err = storage.NewLocal(targetCfg.Path)
+			if err != nil {
+				log.Errorf("Failed to initialize Local: %v", err)
+			}
+			log.Infof("✓ Local upload enabled")
 
 		default:
 			log.Warnf("Unknown upload target type: %s", targetCfg.Type)
@@ -131,7 +122,6 @@ func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.U
 
 func initializeBackupJobs(
 	cfg *config.Config,
-	localStorage *storage.LocalStorage,
 	uploadTargets []usecase.UploadTarget,
 	comp domain.Compressor,
 	log *logger.Logger,
@@ -144,10 +134,6 @@ func initializeBackupJobs(
 		switch dbCfg.Type {
 		case "mysql":
 			db = database.NewMySQL(&dbCfg)
-		case "postgresql":
-			db = database.NewPostgreSQL(&dbCfg)
-		case "mongodb":
-			db = database.NewMongoDB(&dbCfg)
 		default:
 			log.Warnf("Unsupported database type: %s for %s", dbCfg.Type, dbCfg.Name)
 			continue
@@ -164,7 +150,6 @@ func initializeBackupJobs(
 		// Create backup use case for this database
 		backupUC := usecase.NewBackup(
 			db,
-			localStorage,
 			uploadTargets,
 			comp,
 			log,
@@ -182,37 +167,6 @@ func initializeBackupJobs(
 	}
 
 	return jobs
-}
-
-func Databases(cfg *config.Config, log *logger.Logger) []domain.Database {
-	dbs := make([]domain.Database, 0)
-
-	for _, dbCfg := range cfg.EnabledDatabases() {
-		var db domain.Database
-
-		switch dbCfg.Type {
-		case "mysql":
-			db = database.NewMySQL(&dbCfg)
-		case "postgresql":
-			db = database.NewPostgreSQL(&dbCfg)
-		case "mongodb":
-			db = database.NewMongoDB(&dbCfg)
-		default:
-			log.Warnf("Unsupported database type: %s for %s", dbCfg.Type, dbCfg.Name)
-			continue
-		}
-
-		// Test connection
-		ctx := context.Background()
-		if err := db.Ping(ctx); err != nil {
-			log.Errorf("Failed to connect to %s: %v", dbCfg.Name, err)
-			continue
-		}
-
-		dbs = append(dbs, db)
-	}
-
-	return dbs
 }
 
 func (a *App) Run(ctx context.Context) error {

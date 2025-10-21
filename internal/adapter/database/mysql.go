@@ -41,11 +41,11 @@ func (m *MySQLDatabase) Backup(ctx context.Context, outputPath string) error {
 	return nil
 }
 
-func (m *MySQLDatabase) GetName() string {
+func (m *MySQLDatabase) Name() string {
 	return m.config.Name
 }
 
-func (m *MySQLDatabase) GetType() string {
+func (m *MySQLDatabase) Type() string {
 	return "mysql"
 }
 

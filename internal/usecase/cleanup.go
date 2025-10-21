@@ -3,28 +3,23 @@ package usecase
 import (
 	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"sync"
 	"time"
 )
 
 type Cleanup struct {
-	localStorage  LocalStorage
 	uploadTargets []UploadTarget
 	logger        Logger
 	retentionDays int
 }
 
 func NewCleanup(
-	localStorage LocalStorage,
 	uploadTargets []UploadTarget,
 	logger Logger,
 	retentionDays int,
 ) *Cleanup {
 	return &Cleanup{
-		localStorage:  localStorage,
-		uploadTargets: uploadTargets,
 		logger:        logger,
 		retentionDays: retentionDays,
 	}
@@ -35,46 +30,11 @@ func (uc *Cleanup) Execute(ctx context.Context) error {
 
 	cutoff := time.Now().AddDate(0, 0, -uc.retentionDays)
 
-	if err := uc.cleanupLocal(ctx, cutoff); err != nil {
-		uc.logger.Errorf("Local cleanup failed: %v", err)
-	}
-
 	if len(uc.uploadTargets) > 0 {
 		uc.cleanupTargets(ctx, cutoff)
 	}
 
 	uc.logger.Infof("Cleanup completed")
-	return nil
-}
-
-func (uc *Cleanup) cleanupLocal(ctx context.Context, cutoff time.Time) error {
-	files, err := uc.localStorage.List(ctx)
-	if err != nil {
-		return fmt.Errorf("list files: %w", err)
-	}
-
-	deleted := 0
-	for _, filename := range files {
-		filePath := uc.localStorage.GetPath(filename)
-		fileInfo, err := os.Stat(filePath)
-		if err != nil {
-			uc.logger.Warnf("Failed to stat file %s: %v", filename, err)
-			continue
-		}
-
-		if fileInfo.ModTime().Before(cutoff) {
-			uc.logger.Infof("Deleting old backup from local: %s (age: %s)",
-				filename, time.Since(fileInfo.ModTime()).Round(24*time.Hour))
-
-			if err := uc.localStorage.Delete(ctx, filename); err != nil {
-				uc.logger.Errorf("Failed to delete %s: %v", filename, err)
-			} else {
-				deleted++
-			}
-		}
-	}
-
-	uc.logger.Infof("Deleted %d old backup(s) from local storage", deleted)
 	return nil
 }
 

@@ -12,18 +12,19 @@ databases:
     password: ''
     database: 'sapabipa'
     enabled: true
-    schedule: '0 */3 * * * *' # Every minute
+    # schedule: '0 */3 * * * *' # Every minute
+    schedule: '* * * * * *' # Every seconds
 
 backup:
-  local_path: 'backups/databases'
   retention_days: 14
   compress: true
 
   upload_targets:
     - type: 'local'
       enabled: true
+      path: 'backups/databases'
 
     - type: 'gdrive'
       enabled: false
       credentials_file: '/etc/phylax/gdrive-credentials.json'
-      folder_id: 'your_folder_id'
+      folder_id: ''

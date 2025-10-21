@@ -4,7 +4,7 @@ import "context"
 
 type Database interface {
 	Backup(ctx context.Context, outputPath string) error
-	GetName() string
-	GetType() string
+	Name() string
+	Type() string
 	Ping(ctx context.Context) error
 }
