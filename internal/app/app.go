@@ -22,7 +22,7 @@ type App struct {
 	uploadTargets []usecase.UploadTarget
 	databases     []domain.Database
 	backupJobs    []domain.BackupJob
-	cleanupUC     *usecase.CleanupUseCase
+	cleanupUC     *usecase.Cleanup
 }
 
 func New(cfg *config.Config) (*App, error) {
@@ -33,7 +33,7 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	log.Infof("Starting %s", cfg.App.Name)
-	log.Infof("Found %d database(s) configured", len(cfg.GetEnabledDatabases()))
+	log.Infof("Found %d database(s) configured", len(cfg.EnabledDatabases()))
 
 	// Initialize local storage
 	localStorage, err := storage.NewLocal(cfg.Backup.LocalPath)
@@ -82,7 +82,7 @@ func New(cfg *config.Config) (*App, error) {
 func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.UploadTarget {
 	var targets []usecase.UploadTarget
 
-	for _, targetCfg := range cfg.GetEnabledUploadTargets() {
+	for _, targetCfg := range cfg.EnabledUploadTargets() {
 		var stor domain.Storage
 		var err error
 
@@ -138,7 +138,7 @@ func initializeBackupJobs(
 ) []domain.BackupJob {
 	var jobs []domain.BackupJob
 
-	for _, dbCfg := range cfg.GetEnabledDatabases() {
+	for _, dbCfg := range cfg.EnabledDatabases() {
 		var db domain.Database
 
 		switch dbCfg.Type {
@@ -187,7 +187,7 @@ func initializeBackupJobs(
 func Databases(cfg *config.Config, log *logger.Logger) []domain.Database {
 	dbs := make([]domain.Database, 0)
 
-	for _, dbCfg := range cfg.GetEnabledDatabases() {
+	for _, dbCfg := range cfg.EnabledDatabases() {
 		var db domain.Database
 
 		switch dbCfg.Type {

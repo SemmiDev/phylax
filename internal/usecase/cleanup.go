@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 )
 
-type CleanupUseCase struct {
+type Cleanup struct {
 	localStorage  LocalStorage
 	uploadTargets []UploadTarget
 	logger        Logger
@@ -20,8 +21,8 @@ func NewCleanup(
 	uploadTargets []UploadTarget,
 	logger Logger,
 	retentionDays int,
-) *CleanupUseCase {
-	return &CleanupUseCase{
+) *Cleanup {
+	return &Cleanup{
 		localStorage:  localStorage,
 		uploadTargets: uploadTargets,
 		logger:        logger,
@@ -29,32 +30,30 @@ func NewCleanup(
 	}
 }
 
-func (uc *CleanupUseCase) Execute(ctx context.Context) error {
+func (uc *Cleanup) Execute(ctx context.Context) error {
 	uc.logger.Infof("Starting cleanup, retention: %d days", uc.retentionDays)
 
-	cutoffTime := time.Now().AddDate(0, 0, -uc.retentionDays)
+	cutoff := time.Now().AddDate(0, 0, -uc.retentionDays)
 
-	// Cleanup local storage
-	if err := uc.cleanupLocal(ctx, cutoffTime); err != nil {
+	if err := uc.cleanupLocal(ctx, cutoff); err != nil {
 		uc.logger.Errorf("Local cleanup failed: %v", err)
 	}
 
-	// Cleanup all upload targets in parallel
 	if len(uc.uploadTargets) > 0 {
-		uc.cleanupTargets(ctx, cutoffTime)
+		uc.cleanupTargets(ctx, cutoff)
 	}
 
 	uc.logger.Infof("Cleanup completed")
 	return nil
 }
 
-func (uc *CleanupUseCase) cleanupLocal(ctx context.Context, cutoffTime time.Time) error {
+func (uc *Cleanup) cleanupLocal(ctx context.Context, cutoff time.Time) error {
 	files, err := uc.localStorage.List(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to list files: %w", err)
+		return fmt.Errorf("list files: %w", err)
 	}
 
-	deletedCount := 0
+	deleted := 0
 	for _, filename := range files {
 		filePath := uc.localStorage.GetPath(filename)
 		fileInfo, err := os.Stat(filePath)
@@ -63,24 +62,23 @@ func (uc *CleanupUseCase) cleanupLocal(ctx context.Context, cutoffTime time.Time
 			continue
 		}
 
-		if fileInfo.ModTime().Before(cutoffTime) {
+		if fileInfo.ModTime().Before(cutoff) {
 			uc.logger.Infof("Deleting old backup from local: %s (age: %s)",
-				filename,
-				time.Since(fileInfo.ModTime()).Round(24*time.Hour))
+				filename, time.Since(fileInfo.ModTime()).Round(24*time.Hour))
 
 			if err := uc.localStorage.Delete(ctx, filename); err != nil {
 				uc.logger.Errorf("Failed to delete %s: %v", filename, err)
 			} else {
-				deletedCount++
+				deleted++
 			}
 		}
 	}
 
-	uc.logger.Infof("Deleted %d old backup(s) from local storage", deletedCount)
+	uc.logger.Infof("Deleted %d old backup(s) from local storage", deleted)
 	return nil
 }
 
-func (uc *CleanupUseCase) cleanupTargets(ctx context.Context, cutoffTime time.Time) {
+func (uc *Cleanup) cleanupTargets(ctx context.Context, cutoff time.Time) {
 	var wg sync.WaitGroup
 
 	for _, target := range uc.uploadTargets {
@@ -88,7 +86,7 @@ func (uc *CleanupUseCase) cleanupTargets(ctx context.Context, cutoffTime time.Ti
 		go func(t UploadTarget) {
 			defer wg.Done()
 
-			if err := uc.cleanupTarget(ctx, t, cutoffTime); err != nil {
+			if err := uc.cleanupTarget(ctx, t, cutoff); err != nil {
 				uc.logger.Errorf("Cleanup failed for %s: %v", t.Name, err)
 			}
 		}(target)
@@ -97,55 +95,60 @@ func (uc *CleanupUseCase) cleanupTargets(ctx context.Context, cutoffTime time.Ti
 	wg.Wait()
 }
 
-func (uc *CleanupUseCase) cleanupTarget(ctx context.Context, target UploadTarget, cutoffTime time.Time) error {
-	// Try to get old files with timestamp support
-	type OldFileGetter interface {
-		GetOldFiles(ctx context.Context, cutoffTime time.Time) ([]string, error)
-	}
-
-	deletedCount := 0
-
-	if getter, ok := target.Storage.(OldFileGetter); ok {
-		files, err := getter.GetOldFiles(ctx, cutoffTime)
+func (uc *Cleanup) cleanupTarget(ctx context.Context, target UploadTarget, cutoff time.Time) error {
+	files, err := target.Storage.GetOldFiles(ctx, cutoff)
+	if err != nil {
+		files, err = uc.fallbackListFiles(ctx, target, cutoff)
 		if err != nil {
-			return fmt.Errorf("failed to list old files: %w", err)
-		}
-
-		for _, filename := range files {
-			uc.logger.Infof("Deleting old backup from %s: %s", target.Name, filename)
-
-			if err := target.Storage.Delete(ctx, filename); err != nil {
-				uc.logger.Errorf("Failed to delete %s from %s: %v", filename, target.Name, err)
-			} else {
-				deletedCount++
-			}
-		}
-	} else {
-		// Fallback: list all and parse timestamp
-		files, err := target.Storage.List(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to list files: %w", err)
-		}
-
-		for _, filename := range files {
-			timestamp, err := extractTimestamp(filename)
-			if err != nil {
-				uc.logger.Warnf("Could not parse timestamp from %s: %v", filename, err)
-				continue
-			}
-
-			if timestamp.Before(cutoffTime) {
-				uc.logger.Infof("Deleting old backup from %s: %s", target.Name, filename)
-
-				if err := target.Storage.Delete(ctx, filename); err != nil {
-					uc.logger.Errorf("Failed to delete %s from %s: %v", filename, target.Name, err)
-				} else {
-					deletedCount++
-				}
-			}
+			return err
 		}
 	}
 
-	uc.logger.Infof("Deleted %d old backup(s) from %s", deletedCount, target.Name)
+	deleted := 0
+	for _, filename := range files {
+		uc.logger.Infof("Deleting old backup from %s: %s", target.Name, filename)
+
+		if err := target.Storage.Delete(ctx, filename); err != nil {
+			uc.logger.Errorf("Failed to delete %s from %s: %v", filename, target.Name, err)
+		} else {
+			deleted++
+		}
+	}
+
+	uc.logger.Infof("Deleted %d old backup(s) from %s", deleted, target.Name)
 	return nil
+}
+
+func (uc *Cleanup) fallbackListFiles(ctx context.Context, target UploadTarget, cutoff time.Time) ([]string, error) {
+	files, err := target.Storage.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list files: %w", err)
+	}
+
+	oldFiles := make([]string, 0)
+	for _, filename := range files {
+		timestamp, err := extractTimestamp(filename)
+		if err != nil {
+			uc.logger.Warnf("Could not parse timestamp from %s: %v", filename, err)
+			continue
+		}
+
+		if timestamp.Before(cutoff) {
+			oldFiles = append(oldFiles, filename)
+		}
+	}
+
+	return oldFiles, nil
+}
+
+func extractTimestamp(filename string) (time.Time, error) {
+	pattern := regexp.MustCompile(`(\d{8})_(\d{6})`)
+	matches := pattern.FindStringSubmatch(filename)
+
+	if len(matches) < 3 {
+		return time.Time{}, fmt.Errorf("invalid filename format: no timestamp found")
+	}
+
+	timestampStr := matches[1] + "_" + matches[2]
+	return time.Parse("20060102_150405", timestampStr)
 }

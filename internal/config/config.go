@@ -19,20 +19,16 @@ type AppConfig struct {
 }
 
 type DatabaseConfig struct {
-	Name     string `mapstructure:"name"`
-	Type     string `mapstructure:"type"`
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	Database string `mapstructure:"database"`
-	Enabled  bool   `mapstructure:"enabled"`
-	Schedule string `mapstructure:"schedule"`
-
-	// PostgreSQL specific
-	SSLMode string `mapstructure:"ssl_mode"`
-
-	// MongoDB specific
+	Name         string `mapstructure:"name"`
+	Type         string `mapstructure:"type"`
+	Host         string `mapstructure:"host"`
+	Port         int    `mapstructure:"port"`
+	Username     string `mapstructure:"username"`
+	Password     string `mapstructure:"password"`
+	Database     string `mapstructure:"database"`
+	Enabled      bool   `mapstructure:"enabled"`
+	Schedule     string `mapstructure:"schedule"`
+	SSLMode      string `mapstructure:"ssl_mode"`
 	AuthDatabase string `mapstructure:"auth_database"`
 }
 
@@ -44,25 +40,19 @@ type BackupConfig struct {
 }
 
 type UploadTarget struct {
-	Type    string `mapstructure:"type"`
-	Enabled bool   `mapstructure:"enabled"`
-
-	// Google Drive
+	Type            string `mapstructure:"type"`
+	Enabled         bool   `mapstructure:"enabled"`
 	CredentialsFile string `mapstructure:"credentials_file"`
 	FolderID        string `mapstructure:"folder_id"`
-
-	// AWS S3
-	Region    string `mapstructure:"region"`
-	Bucket    string `mapstructure:"bucket"`
-	AccessKey string `mapstructure:"access_key"`
-	SecretKey string `mapstructure:"secret_key"`
-	Prefix    string `mapstructure:"prefix"`
-
-	// Telegram
-	BotToken   string `mapstructure:"bot_token"`
-	ChatID     string `mapstructure:"chat_id"`
-	SendFile   bool   `mapstructure:"send_file"`
-	NotifyOnly bool   `mapstructure:"notify_only"`
+	Region          string `mapstructure:"region"`
+	Bucket          string `mapstructure:"bucket"`
+	AccessKey       string `mapstructure:"access_key"`
+	SecretKey       string `mapstructure:"secret_key"`
+	Prefix          string `mapstructure:"prefix"`
+	BotToken        string `mapstructure:"bot_token"`
+	ChatID          string `mapstructure:"chat_id"`
+	SendFile        bool   `mapstructure:"send_file"`
+	NotifyOnly      bool   `mapstructure:"notify_only"`
 }
 
 func Load(path string) (*Config, error) {
@@ -76,49 +66,49 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("backup.compress", true)
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		return nil, fmt.Errorf("read config: %w", err)
 	}
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &cfg, nil
 }
 
-func (c *Config) Validate() error {
+func (c *Config) validate() error {
 	if len(c.Databases) == 0 {
-		return fmt.Errorf("at least one database configuration is required")
+		return fmt.Errorf("at least one database required")
 	}
 
 	for i, db := range c.Databases {
 		if db.Name == "" {
-			return fmt.Errorf("database[%d]: name is required", i)
+			return fmt.Errorf("database[%d]: name required", i)
 		}
 		if db.Type == "" {
-			return fmt.Errorf("database[%d]: type is required", i)
+			return fmt.Errorf("database[%d]: type required", i)
 		}
 		if db.Host == "" {
-			return fmt.Errorf("database[%d]: host is required", i)
+			return fmt.Errorf("database[%d]: host required", i)
 		}
 		if db.Enabled && db.Schedule == "" {
-			return fmt.Errorf("database[%d]: schedule is required when enabled", i)
+			return fmt.Errorf("database[%d]: schedule required when enabled", i)
 		}
 	}
 
 	if c.Backup.LocalPath == "" {
-		return fmt.Errorf("backup.local_path is required")
+		return fmt.Errorf("backup.local_path required")
 	}
 
 	return nil
 }
 
-func (c *Config) GetEnabledDatabases() []DatabaseConfig {
+func (c *Config) EnabledDatabases() []DatabaseConfig {
 	var enabled []DatabaseConfig
 	for _, db := range c.Databases {
 		if db.Enabled {
@@ -128,7 +118,7 @@ func (c *Config) GetEnabledDatabases() []DatabaseConfig {
 	return enabled
 }
 
-func (c *Config) GetEnabledUploadTargets() []UploadTarget {
+func (c *Config) EnabledUploadTargets() []UploadTarget {
 	var enabled []UploadTarget
 	for _, target := range c.Backup.UploadTargets {
 		if target.Enabled {
