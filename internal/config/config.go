@@ -41,6 +41,7 @@ type BackupConfig struct {
 type UploadTarget struct {
 	Type            string `mapstructure:"type"`
 	Path            string `mapstructure:"path"`
+	RefreshToken    string `mapstructure:"refresh_token"`
 	Enabled         bool   `mapstructure:"enabled"`
 	CredentialsFile string `mapstructure:"credentials_file"`
 	FolderID        string `mapstructure:"folder_id"`
@@ -102,6 +103,15 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+func (c *Config) HasUploadTarget(targetType string) bool {
+	for _, target := range c.EnabledUploadTargets() {
+		if target.Type == targetType {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) EnabledDatabases() []DatabaseConfig {

@@ -2,7 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"time"
 
 	"github.com/semmidev/phylax/internal/adapter/compressor"
 	"github.com/semmidev/phylax/internal/adapter/database"
@@ -12,19 +17,138 @@ import (
 	"github.com/semmidev/phylax/internal/infrastructure/logger"
 	"github.com/semmidev/phylax/internal/infrastructure/scheduler"
 	"github.com/semmidev/phylax/internal/usecase"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/drive/v3"
 )
 
+// OAuthService defines the interface for OAuth-related operations.
+type OAuthService interface {
+	GetConfig() *oauth2.Config
+	StartAuthServer(ctx context.Context) error
+	Shutdown(ctx context.Context) error
+}
+
+// GoogleOAuthService handles Google OAuth configuration and server.
+type GoogleOAuthService struct {
+	config     *oauth2.Config
+	logger     *logger.Logger
+	authServer *http.Server
+}
+
+// NewGoogleOAuthService creates a new GoogleOAuthService.
+func NewGoogleOAuthService(logger *logger.Logger, clientSecretPath string) (*GoogleOAuthService, error) {
+	if logger == nil {
+		return nil, errors.New("logger cannot be nil")
+	}
+	if clientSecretPath == "" {
+		return nil, errors.New("client secret path cannot be empty")
+	}
+
+	b, err := os.ReadFile(clientSecretPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read client_secret.json: %w", err)
+	}
+
+	cfg, err := google.ConfigFromJSON(b, drive.DriveFileScope)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse client secret: %w", err)
+	}
+
+	return &GoogleOAuthService{
+		config: cfg,
+		logger: logger,
+	}, nil
+}
+
+// GetConfig returns the OAuth2 configuration.
+func (s *GoogleOAuthService) GetConfig() *oauth2.Config {
+	return s.config
+}
+
+// StartAuthServer starts the OAuth HTTP server in a goroutine.
+func (s *GoogleOAuthService) StartAuthServer(ctx context.Context) error {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /auth/google/drive", func(w http.ResponseWriter, r *http.Request) {
+		authURL := s.config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+		http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+	})
+
+	mux.HandleFunc("GET /auth/google/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			http.Error(w, "missing code parameter", http.StatusBadRequest)
+			return
+		}
+
+		token, err := s.config.Exchange(r.Context(), code)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("token exchange failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		tokenJSON, err := json.MarshalIndent(token, "", "  ")
+		if err != nil {
+			http.Error(w, "failed to marshal token", http.StatusInternalServerError)
+			return
+		}
+
+		refresh := token.RefreshToken
+		if refresh == "" {
+			fmt.Fprintln(w, "⚠️ No refresh token returned. Revoke app access & re-authorize.")
+			return
+		}
+
+		fmt.Fprintf(w, "✅ Refresh Token:\n%s\n\nFull Token JSON:\n%s", refresh, tokenJSON)
+	})
+
+	s.authServer = &http.Server{
+		Addr:              ":8089",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		s.logger.Infof("Google Drive OAuth server listening on %s", s.authServer.Addr)
+		if err := s.authServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Errorf("OAuth server error: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+// Shutdown gracefully stops the OAuth server.
+func (s *GoogleOAuthService) Shutdown(ctx context.Context) error {
+	if s.authServer == nil {
+		return nil
+	}
+
+	if err := s.authServer.Shutdown(ctx); err != nil {
+		return fmt.Errorf("failed to shutdown OAuth server: %w", err)
+	}
+	s.logger.Infof("OAuth server stopped successfully")
+	return nil
+}
+
+// App represents the main application.
 type App struct {
 	config        *config.Config
 	logger        *logger.Logger
 	scheduler     *scheduler.Scheduler
-	localStorage  *storage.LocalStorage
 	uploadTargets []usecase.UploadTarget
 	backupJobs    []domain.BackupJob
 	cleanupUC     *usecase.Cleanup
+	oauthService  OAuthService
 }
 
-func New(cfg *config.Config) (*App, error) {
+// New creates a new App instance.
+func New(ctx context.Context, cfg *config.Config) (*App, error) {
+	if cfg == nil {
+		return nil, errors.New("config cannot be nil")
+	}
+
 	// Initialize logger
 	log, err := logger.New(cfg.App.LogLevel, cfg.App.LogFile)
 	if err != nil {
@@ -34,27 +158,29 @@ func New(cfg *config.Config) (*App, error) {
 	log.Infof("Starting %s", cfg.App.Name)
 	log.Infof("Found %d database(s) configured", len(cfg.EnabledDatabases()))
 
-	// Initialize compressor
+	// Initialize OAuth service if Google Drive is enabled
+	var oauthService OAuthService
+	if cfg.HasUploadTarget("gdrive") {
+		oauthService, err = NewGoogleOAuthService(log, "client_secret.json")
+		if err != nil {
+			log.Errorf("Failed to initialize Google Drive OAuth service: %v", err)
+		} else {
+			log.Infof("Google Drive OAuth service initialized")
+			if err := oauthService.StartAuthServer(ctx); err != nil {
+				log.Errorf("Failed to start OAuth server: %v", err)
+			}
+		}
+	}
+
 	comp := compressor.NewGzip()
-
-	// Initialize upload targets
-	uploadTargets := initializeUploadTargets(cfg, log)
-
-	// Initialize databases and backup jobs
+	uploadTargets := initializeUploadTargets(cfg, log, oauthService)
 	backupJobs := initializeBackupJobs(cfg, uploadTargets, comp, log)
 
 	if len(backupJobs) == 0 {
 		return nil, fmt.Errorf("no enabled databases found")
 	}
 
-	// Initialize cleanup use case
-	cleanupUC := usecase.NewCleanup(
-		uploadTargets,
-		log,
-		cfg.Backup.RetentionDays,
-	)
-
-	// Initialize scheduler
+	cleanupUC := usecase.NewCleanup(uploadTargets, log, cfg.Backup.RetentionDays)
 	sched := scheduler.New()
 
 	return &App{
@@ -64,10 +190,57 @@ func New(cfg *config.Config) (*App, error) {
 		uploadTargets: uploadTargets,
 		backupJobs:    backupJobs,
 		cleanupUC:     cleanupUC,
+		oauthService:  oauthService,
 	}, nil
 }
 
-func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.UploadTarget {
+// Run starts the application and its scheduled jobs.
+func (a *App) Run(ctx context.Context) error {
+	a.logger.Infof("Application started with %d backup job(s)", len(a.backupJobs))
+
+	for _, job := range a.backupJobs {
+		dbName := job.DatabaseName
+		backupUC := job.BackupUC
+
+		if err := a.scheduler.AddJob(job.Schedule, func(ctx context.Context) error {
+			a.logger.Infof("=== Triggered scheduled backup for %s ===", dbName)
+			return backupUC.Execute(ctx)
+		}); err != nil {
+			return fmt.Errorf("failed to schedule backup for %s: %w", dbName, err)
+		}
+	}
+
+	cleanupSchedule := "0 0 3 * * *"
+	a.logger.Infof("Scheduling cleanup: %s", cleanupSchedule)
+
+	if err := a.scheduler.AddJob(cleanupSchedule, a.cleanupUC.Execute); err != nil {
+		return fmt.Errorf("failed to schedule cleanup: %w", err)
+	}
+
+	a.scheduler.Start()
+	a.logger.Infof("Scheduler started successfully")
+	a.logger.Infof("Backup destinations: %d remote target(s)", len(a.uploadTargets))
+
+	<-ctx.Done()
+	return nil
+}
+
+// Shutdown gracefully stops the application.
+func (a *App) Shutdown(ctx context.Context) {
+	a.logger.Infof("Shutting down application...")
+	a.scheduler.Stop()
+
+	if a.oauthService != nil {
+		if err := a.oauthService.Shutdown(ctx); err != nil {
+			a.logger.Errorf("Failed to shutdown OAuth service: %v", err)
+		}
+	}
+
+	a.logger.Close()
+}
+
+// initializeUploadTargets creates upload targets based on configuration.
+func initializeUploadTargets(cfg *config.Config, log *logger.Logger, oauthService OAuthService) []usecase.UploadTarget {
 	var targets []usecase.UploadTarget
 
 	for _, targetCfg := range cfg.EnabledUploadTargets() {
@@ -76,7 +249,11 @@ func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.U
 
 		switch targetCfg.Type {
 		case "gdrive":
-			stor, err = storage.NewGDrive(&targetCfg)
+			if oauthService == nil {
+				log.Errorf("Google Drive OAuth service not initialized for target: %s", targetCfg.Type)
+				continue
+			}
+			stor, err = storage.NewGDrive(context.Background(), &targetCfg, oauthService.GetConfig())
 			if err != nil {
 				log.Errorf("Failed to initialize Google Drive: %v", err)
 				continue
@@ -103,6 +280,7 @@ func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.U
 			stor, err = storage.NewLocal(targetCfg.Path)
 			if err != nil {
 				log.Errorf("Failed to initialize Local: %v", err)
+				continue
 			}
 			log.Infof("✓ Local upload enabled")
 
@@ -120,6 +298,7 @@ func initializeUploadTargets(cfg *config.Config, log *logger.Logger) []usecase.U
 	return targets
 }
 
+// initializeBackupJobs creates backup jobs based on configuration.
 func initializeBackupJobs(
 	cfg *config.Config,
 	uploadTargets []usecase.UploadTarget,
@@ -139,7 +318,6 @@ func initializeBackupJobs(
 			continue
 		}
 
-		// Test connection
 		ctx := context.Background()
 		if err := db.Ping(ctx); err != nil {
 			log.Errorf("Failed to connect to %s: %v", dbCfg.Name, err)
@@ -147,7 +325,6 @@ func initializeBackupJobs(
 		}
 		log.Infof("✓ Connected to %s (%s)", dbCfg.Name, dbCfg.Type)
 
-		// Create backup use case for this database
 		backupUC := usecase.NewBackup(
 			db,
 			uploadTargets,
@@ -167,43 +344,4 @@ func initializeBackupJobs(
 	}
 
 	return jobs
-}
-
-func (a *App) Run(ctx context.Context) error {
-	a.logger.Infof("Application started with %d backup job(s)", len(a.backupJobs))
-
-	// Schedule all backup jobs
-	for _, job := range a.backupJobs {
-		backupUC := job.BackupUC
-		dbName := job.DatabaseName
-
-		if err := a.scheduler.AddJob(job.Schedule, func(ctx context.Context) error {
-			a.logger.Infof("=== Triggered scheduled backup for %s ===", dbName)
-			return backupUC.Execute(ctx)
-		}); err != nil {
-			return fmt.Errorf("failed to schedule backup for %s: %w", dbName, err)
-		}
-	}
-
-	// Schedule cleanup job (daily at 3 AM)
-	cleanupSchedule := "0 0 3 * * *"
-	a.logger.Infof("Scheduling cleanup: %s", cleanupSchedule)
-
-	if err := a.scheduler.AddJob(cleanupSchedule, a.cleanupUC.Execute); err != nil {
-		return fmt.Errorf("failed to schedule cleanup: %w", err)
-	}
-
-	a.scheduler.Start()
-	a.logger.Infof("Scheduler started successfully")
-	a.logger.Infof("Backup destinations: local + %d remote target(s)", len(a.uploadTargets))
-
-	// Keep running until context is cancelled
-	<-ctx.Done()
-	return nil
-}
-
-func (a *App) Shutdown() {
-	a.logger.Infof("Shutting down application...")
-	a.scheduler.Stop()
-	a.logger.Close()
 }
